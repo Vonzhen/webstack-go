@@ -1,50 +1,63 @@
 package main
 
 import (
-	"context"
-	"flag"
 	"fmt"
-
-	"go.uber.org/zap"
-
-	"github.com/ch3nnn/webstack-go/cmd/server/wire"
-	"github.com/ch3nnn/webstack-go/pkg/config"
-	"github.com/ch3nnn/webstack-go/pkg/log"
+	"net/http"
+	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
-// @title          webstack-go API
-// @version         1.0.0
-// @description     This is a sample server celler server.
-// @termsOfService  http://swagger.io/terms/
-// @contact.name   API Support
-// @contact.url    http://www.swagger.io/support
-// @contact.email  support@swagger.io
-// @license.name  Apache 2.0
-// @license.url   http://www.apache.org/licenses/LICENSE-2.0.html
-// @host      localhost:8000
-// @securityDefinitions.apiKey Bearer
-// @in header
-// @name Authorization
-// @externalDocs.description  OpenAPI
-// @externalDocs.url          https://swagger.io/resources/open-api/
-func main() {
-	envConf := flag.String("conf", "config/local.yml", "config path, eg: -conf ./config/local.yml")
-	flag.Parse()
+var db *gorm.DB
 
-	conf := config.NewConfig(*envConf)
-	logger := log.NewLog(conf)
+// 配置结构体
+type Config struct {
+	gorm.Model
+	SearchEngine string
+	Footer       string
+}
 
-	app, cleanup, err := wire.NewWire(conf, logger)
-	defer cleanup()
+func init() {
+	var err error
+	db, err = gorm.Open(sqlite.Open("config.db"), &gorm.Config{})
 	if err != nil {
-		panic(err)
+		panic("failed to connect to database")
 	}
+	db.AutoMigrate(&Config{})
+}
 
-	logger.Info(fmt.Sprintf("load conf file: %s", *envConf))
-	logger.Info("server start", zap.String("host", fmt.Sprintf("http://%s:%d", conf.GetString("http.host"), conf.GetInt("http.port"))))
-	logger.Info("docs addr", zap.String("addr", fmt.Sprintf("http://%s:%d/swagger/index.html", conf.GetString("http.host"), conf.GetInt("http.port"))))
+func main() {
+	r := gin.Default()
 
-	if err = app.Run(context.Background()); err != nil {
-		panic(err)
-	}
+	// 首页处理
+	r.GET("/", func(c *gin.Context) {
+		var config Config
+		db.First(&config)
+		c.HTML(http.StatusOK, "index.html", gin.H{
+			"title":      "Webstack-Go 星空主题",
+			"footer":     config.Footer,
+			"search_eng": config.SearchEngine,
+		})
+	})
+
+	// 后台管理页面
+	r.GET("/admin", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "admin.html", nil)
+	})
+
+	// 保存后台配置
+	r.POST("/admin/save-config", func(c *gin.Context) {
+		searchEngine := c.PostForm("search_engine")
+		footer := c.PostForm("footer")
+
+		config := Config{SearchEngine: searchEngine, Footer: footer}
+		db.Create(&config)
+
+		c.Redirect(http.StatusFound, "/admin")
+	})
+
+	// 启动服务器
+	r.LoadHTMLGlob("templates/*")
+	r.Static("/static", "./static")
+	r.Run(":8080")
 }
